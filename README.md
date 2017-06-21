@@ -4,9 +4,7 @@
 
 ![Setup](/assets/setup.jpg)
 
-![Crescendo sequence](/assets/crescendo.gif)
-
-<p style="text-align:center">
+<p align="center">
   <img alt="Crescendo sequence" src="/assets/crescendo.gif"/>
 </p>
 

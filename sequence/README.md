@@ -54,7 +54,7 @@ roulette ball.
 $ sequence roulette -f16 521900 > /dev/rfcomm0
 ```
 
-<p style="text-align:center">
+<p align="center">
   <img alt="Roulette sequence" src="/assets/roulette.gif"/>
 </p>
 
@@ -62,7 +62,7 @@ $ sequence roulette -f16 521900 > /dev/rfcomm0
 
 The `crescendo` command recreates the animation shown below:
 
-<p style="text-align:center">
+<p align="center">
   <img alt="Sequence sequence" src="/assets/sequence.gif"/>
 </p>
 
