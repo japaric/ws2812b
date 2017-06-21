@@ -1,0 +1,35 @@
+[package]
+authors = ["Jorge Aparicio <jorge@japaric.io>"]
+description = "WS2812 demo application"
+license = "MIT OR Apache-2.0"
+name = "ws2812"
+repository = "https://github.com/japaric/ws2812"
+version = "0.1.0"
+
+[dependencies]
+cortex-m-rtfm = "0.1.1"
+
+[dependencies.blue-pill]
+git = "https://github.com/japaric/blue-pill"
+rev = "c5252eeef4e9710c199ae96164d37d69e127800d"
+
+[dependencies.cortex-m]
+version = "0.2.10"
+
+[dependencies.cortex-m-rt]
+version = "0.2.4"
+
+[dependencies.embedded-hal]
+git = "https://github.com/japaric/embedded-hal"
+rev = "5295697669f5b48a900aa325b8ebb4d4e8d4b236"
+
+[dependencies.nb]
+git = "https://github.com/japaric/nb"
+
+[dependencies.shared]
+optional = false
+path = "../shared"
+
+[profile.release]
+debug = true
+lto = true

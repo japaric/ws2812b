@@ -1,0 +1,10 @@
+[package]
+authors = ["Jorge Aparicio <jorge@japaric.io>"]
+name = "sequence"
+version = "0.1.0"
+
+[dependencies]
+chan = "0.1.19"
+clap = "2.24.2"
+error-chain = "0.10.0"
+rand = "0.3.15"

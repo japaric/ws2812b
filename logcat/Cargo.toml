@@ -1,0 +1,8 @@
+[package]
+authors = ["Jorge Aparicio <jorge@japaric.io>"]
+name = "logcat"
+version = "0.1.0"
+
+[dependencies.shared]
+optional = false
+path = "../shared"
