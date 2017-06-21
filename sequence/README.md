@@ -63,7 +63,7 @@ $ sequence roulette -f16 521900 > /dev/rfcomm0
 The `crescendo` command recreates the animation shown below:
 
 <p align="center">
-  <img alt="Sequence sequence" src="/assets/sequence.gif"/>
+  <img alt="Crescendo sequence" src="/assets/crescendo.gif"/>
 </p>
 
 ``` console
