@@ -34,6 +34,15 @@ $ sequence random -f1 > /dev/rfcomm0
 
 ![Random sequence](/assets/random.jpg)
 
+### `rainbow`
+
+The `rainbow` command draws a rainbow -- well, not quite because the pattern
+only has 6 colors -- on the ring and then makes the rainbow rotate according to
+the `-f`, FPS, flag. The `-b`, brightness, flag can be used to tweak the
+brightness of the LEDs.
+
+![Rainbow sequence](/assets/rainbow.jpg)
+
 ### `roulette`
 
 The `roulette` command simulates a (never ending) roulette game where a single
@@ -45,13 +54,17 @@ roulette ball.
 $ sequence roulette -f16 521900 > /dev/rfcomm0
 ```
 
-![Roulette sequence](/assets/roulette.gif)
+<p style="text-align:center">
+  <img alt="Roulette sequence" src="/assets/roulette.gif"/>
+</p>
 
 ### `crescendo`
 
 The `crescendo` command recreates the animation shown below:
 
-![Crescendo sequence](/assets/crescendo.gif)
+<p style="text-align:center">
+  <img alt="Sequence sequence" src="/assets/sequence.gif"/>
+</p>
 
 ``` console
 $ sequence crescendo -f64 0f000f

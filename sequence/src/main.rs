@@ -27,68 +27,30 @@ fn main() {
 const N: usize = 24;
 
 fn run() -> Result<()> {
+    let brightness = Arg::with_name("brightness")
+        .short("b")
+        .required(true)
+        .takes_value(true);
     let color = Arg::with_name("color").required(true).index(1);
     let fps = Arg::with_name("fps")
         .short("f")
         .value_name("FPS")
         .takes_value(true);
     let matches = App::new("sequence")
+        .subcommand(App::new("crescendo").arg(color.clone()).arg(fps.clone()))
+        .subcommand(App::new("rainbow").arg(brightness).arg(fps.clone()))
         .subcommand(App::new("random").arg(fps.clone()))
         .subcommand(App::new("roulette").arg(color.clone()).arg(fps.clone()))
         .subcommand(App::new("single").arg(color.clone()))
-        .subcommand(App::new("crescendo").arg(color.clone()).arg(fps))
         .get_matches();
 
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
-
-    if let Some(random) = matches.subcommand_matches("random") {
-        let mut rng = rng();
-
-        let fps: u32 = random.value_of("fps").unwrap().parse().unwrap();
-        let timer = chan::tick_ms(1_000 / fps);
-
-        let mut bytes = [0; 3 * N];
-        loop {
-            rng.fill_bytes(&mut bytes);
-
-            stdout.write_all(&bytes)?;
-            stdout.flush()?;
-
-            timer.recv();
-        }
-    } else if let Some(roulette) = matches.subcommand_matches("roulette") {
-        let color = parse(roulette.value_of("color").unwrap())?;
-
-        let fps: u32 = roulette.value_of("fps").unwrap().parse().unwrap();
-        let timer = chan::tick_ms(1_000 / fps);
-
-        let mut pos = 0;
-        loop {
-            let mut bytes = [0; 3 * N];
-
-            bytes[3 * pos..3 * (pos + 1)].copy_from_slice(&color);
-            pos = (pos + 1) % N;
-
-            stdout.write_all(&bytes)?;
-            stdout.flush()?;
-            timer.recv();
-        }
-    } else if let Some(single) = matches.subcommand_matches("single") {
-        let color = parse(single.value_of("color").unwrap())?;
-
-        let mut bytes = [0; 3 * N];
-        for chunk in bytes.chunks_mut(3) {
-            chunk.copy_from_slice(&color);
-        }
-
-        stdout.write_all(&bytes)?;
-        stdout.flush()?;
-    } else if let Some(crescendo) = matches.subcommand_matches("crescendo") {
+    if let Some(crescendo) = matches.subcommand_matches("crescendo") {
         let color = parse(crescendo.value_of("color").unwrap())?;
 
-        let fps: u32 = crescendo.value_of("fps").unwrap().parse().unwrap();
-        let timer = chan::tick_ms(1_000 / fps);
+        let fps: u8 = crescendo.value_of("fps").unwrap().parse().unwrap();
+        let timer = chan::tick_ms(1_000 / fps as u32);
 
         let mut pos = 0;
         let mut sz = 1;
@@ -133,6 +95,77 @@ fn run() -> Result<()> {
 
             timer.recv();
         }
+    } else if let Some(rainbow) = matches.subcommand_matches("rainbow") {
+        let b: u8 = rainbow.value_of("brightness").unwrap().parse().unwrap();
+        let fps: u8 = rainbow.value_of("fps").unwrap().parse().unwrap();
+
+        let mut bytes = [0; 24 * N];
+
+        let mut pos = 0;
+        let timer = chan::tick_ms(1_000 / fps as u32);
+        loop {
+            for (i, led) in bytes.chunks_mut(3).enumerate() {
+                let color = match (i + pos) % 24 {
+                    0...3 => [b, 0, 0],
+                    4...7 => [b, b, 0],
+                    8...11 => [0, b, 0],
+                    12...15 => [0, b, b],
+                    16...19 => [0, 0, b],
+                    20...23 => [b, 0, b],
+                    _ => unreachable!(),
+                };
+                led.copy_from_slice(&color);
+            }
+
+            pos = (pos + 1) % 24;
+
+            stdout.write_all(&bytes)?;
+            stdout.flush()?;
+
+            timer.recv();
+        }
+    } else if let Some(random) = matches.subcommand_matches("random") {
+        let mut rng = rng();
+
+        let fps: u8 = random.value_of("fps").unwrap().parse().unwrap();
+        let timer = chan::tick_ms(1_000 / fps as u32);
+
+        let mut bytes = [0; 3 * N];
+        loop {
+            rng.fill_bytes(&mut bytes);
+
+            stdout.write_all(&bytes)?;
+            stdout.flush()?;
+
+            timer.recv();
+        }
+    } else if let Some(roulette) = matches.subcommand_matches("roulette") {
+        let color = parse(roulette.value_of("color").unwrap())?;
+
+        let fps: u8 = roulette.value_of("fps").unwrap().parse().unwrap();
+        let timer = chan::tick_ms(1_000 / fps as u32);
+
+        let mut pos = 0;
+        loop {
+            let mut bytes = [0; 3 * N];
+
+            bytes[3 * pos..3 * (pos + 1)].copy_from_slice(&color);
+            pos = (pos + 1) % N;
+
+            stdout.write_all(&bytes)?;
+            stdout.flush()?;
+            timer.recv();
+        }
+    } else if let Some(single) = matches.subcommand_matches("single") {
+        let color = parse(single.value_of("color").unwrap())?;
+
+        let mut bytes = [0; 3 * N];
+        for chunk in bytes.chunks_mut(3) {
+            chunk.copy_from_slice(&color);
+        }
+
+        stdout.write_all(&bytes)?;
+        stdout.flush()?;
     }
 
     Ok(())

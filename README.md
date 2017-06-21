@@ -6,6 +6,10 @@
 
 ![Crescendo sequence](/assets/crescendo.gif)
 
+<p style="text-align:center">
+  <img alt="Crescendo sequence" src="/assets/crescendo.gif"/>
+</p>
+
 ## Part list
 
 - [24x WS2812B LED ring](https://www.aliexpress.com/wholesale?SearchText=ws2812b+24)
