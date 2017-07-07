@@ -1,30 +1,24 @@
 #![deny(warnings)]
 #![feature(const_fn)]
+#![feature(plugin)]
 #![feature(used)]
 #![no_std]
+#![plugin(rtfm_macros)]
 
 extern crate blue_pill;
 
-extern crate cortex_m_rt;
-
-#[macro_use]
+#[macro_use(task)]
 extern crate cortex_m_rtfm as rtfm;
-
-extern crate embedded_hal as hal;
 
 extern crate shared;
 
-use core::cell::{Cell, RefCell};
-
 use blue_pill::dma::{Buffer, Dma1Channel2, Dma1Channel4, Dma1Channel5};
-use blue_pill::stm32f103xx;
+use blue_pill::prelude::*;
+use blue_pill::stm32f103xx::Interrupt;
 use blue_pill::time::{Hertz, Microseconds};
 use blue_pill::{Channel, Pwm, Serial, Timer};
-use hal::prelude::*;
-use rtfm::{C1, Resource, P0, P1, T0, T1, TMax};
+use rtfm::Threshold;
 use shared::State;
-use stm32f103xx::interrupt::{DMA1_CHANNEL2, DMA1_CHANNEL4, DMA1_CHANNEL5,
-                             EXTI0, TIM1_UP_TIM10, TIM3};
 
 // CONFIGURATION
 const _0: u8 = 3;
@@ -34,72 +28,143 @@ const LATCH_DELAY: Microseconds = Microseconds(50);
 const LOG_FREQUENCY: Hertz = Hertz(1);
 const WS2812B_FREQUENCY: Hertz = Hertz(400_000);
 
-// RESOURCES
-peripherals!(stm32f103xx, {
-    AFIO: Peripheral { ceiling: C0, },
-    DMA1: Peripheral { ceiling: C1, },
-    DWT: Peripheral { ceiling: C1, },
-    GPIOA: Peripheral { ceiling: C0, },
-    RCC: Peripheral { ceiling: C0, },
-    TIM1: Peripheral { ceiling: C1, },
-    TIM2: Peripheral { ceiling: C1, },
-    TIM3: Peripheral { ceiling: C1, },
-    USART1: Peripheral { ceiling: C1, },
-});
+// TASKS AND RESOURCES
+rtfm! {
+    device: blue_pill::stm32f103xx,
 
-static BUSY: Resource<Cell<bool>, C1> = Resource::new(Cell::new(false));
-static CONTEXT_SWITCHES: Resource<Cell<u16>, C1> = Resource::new(Cell::new(0));
-static FRAMES: Resource<Cell<u8>, C1> = Resource::new(Cell::new(0));
-static RGB_ARRAY: Resource<RefCell<[u8; 24 * 3]>, C1> =
-    Resource::new(RefCell::new([0; 24 * 3]));
-static TX_BUFFER: Resource<Buffer<[u8; 13], Dma1Channel4>, C1> =
-    Resource::new(Buffer::new([0; 13]));
-static RX_BUFFER: Resource<Buffer<[u8; 24 * 3], Dma1Channel5>, C1> =
-    Resource::new(Buffer::new([0; 24 * 3]));
-static SLEEP_CYCLES: Resource<Cell<u32>, C1> = Resource::new(Cell::new(0));
-static WS2812B_BUFFER: Resource<Buffer<[u8; (24*24) + 1], Dma1Channel2>, C1> =
-    Resource::new(Buffer::new([0; (24 * 24) + 1]));
+    resources: {
+        BUSY: bool = false;
+        CONTEXT_SWITCHES: u16 = 0;
+        FRAMES: u8 = 0;
+        RGB_ARRAY: [u8; 72] = [0; 72];
+        RX_BUFFER: Buffer<[u8; 72], Dma1Channel5> = Buffer::new([0; 72]);
+        SLEEP_CYCLES: u32 = 0;
+        TX_BUFFER: Buffer<[u8; 13], Dma1Channel4> = Buffer::new([0; 13]);
+        WS2812B_BUFFER: Buffer<[u8; 577], Dma1Channel2> = Buffer::new([0; 577]);
+    },
+
+    init: {
+        path: init,
+    },
+
+    idle: {
+        path: idle,
+        resources: [
+            DWT,
+            SLEEP_CYCLES,
+        ],
+    },
+
+    tasks: {
+        DMA1_CHANNEL2: {
+            enabled: true,
+            priority: 1,
+            resources: [
+                CONTEXT_SWITCHES,
+                DMA1,
+                TIM1,
+                WS2812B_BUFFER,
+            ],
+        },
+
+        DMA1_CHANNEL4: {
+            enabled: true,
+            priority: 1,
+            resources: [
+                CONTEXT_SWITCHES,
+                DMA1,
+                TX_BUFFER,
+            ],
+        },
+
+        DMA1_CHANNEL5: {
+            enabled: true,
+            priority: 1,
+            resources: [
+                BUSY,
+                CONTEXT_SWITCHES,
+                DMA1,
+                RGB_ARRAY,
+                RX_BUFFER,
+                USART1,
+            ],
+        },
+
+        EXTI0: {
+            enabled: true,
+            priority: 1,
+            resources: [
+                CONTEXT_SWITCHES,
+                DMA1,
+                RGB_ARRAY,
+                TIM2,
+                WS2812B_BUFFER,
+            ],
+        },
+
+        TIM1_UP_TIM10: {
+            enabled: true,
+            priority: 1,
+            resources: [
+                BUSY,
+                CONTEXT_SWITCHES,
+                FRAMES,
+                TIM1,
+            ],
+        },
+
+        TIM3: {
+            enabled: true,
+            priority: 1,
+            resources: [
+                CONTEXT_SWITCHES,
+                DMA1,
+                DWT,
+                FRAMES,
+                SLEEP_CYCLES,
+                TIM3,
+                TX_BUFFER,
+                USART1,
+            ],
+        },
+    },
+}
 
 // INITIALIZATION
-fn init(ref prio: P0, thr: &TMax) {
-    let afio = &AFIO.access(prio, thr);
-    let dma1 = &DMA1.access(prio, thr);
-    let dwt = DWT.access(prio, thr);
-    let gpioa = &GPIOA.access(prio, thr);
-    let rcc = &RCC.access(prio, thr);
-    let rx_buffer = RX_BUFFER.access(prio, thr);
-    let tim1 = TIM1.access(prio, thr);
-    let tim2 = TIM2.access(prio, thr);
-    let tim3 = TIM3.access(prio, thr);
-    let usart1 = USART1.access(prio, thr);
+fn init(p: init::Peripherals, r: init::Resources) {
+    let pwm = Pwm(p.TIM2);
+    let serial = Serial(p.USART1);
+    let timer1 = Timer(p.TIM1);
+    let timer3 = Timer(p.TIM3);
 
-    let timer1 = Timer(&*tim1);
-    let timer3 = Timer(&*tim3);
-    let serial = Serial(&*usart1);
-    let pwm = Pwm(&*tim2);
+    p.DWT.enable_cycle_counter();
 
-    dwt.enable_cycle_counter();
+    timer1.init(LATCH_DELAY, p.RCC);
 
-    timer1.init(LATCH_DELAY, rcc);
+    timer3.init(LOG_FREQUENCY.invert(), p.RCC);
 
-    timer3.init(LOG_FREQUENCY.invert(), rcc);
+    serial.init(BAUD_RATE.invert(), p.AFIO, Some(p.DMA1), p.GPIOA, p.RCC);
 
-    serial.init(BAUD_RATE.invert(), afio, Some(dma1), gpioa, rcc);
-
-    pwm.init(WS2812B_FREQUENCY.invert(), afio, Some(dma1), gpioa, rcc);
+    pwm.init(
+        WS2812B_FREQUENCY.invert(),
+        p.AFIO,
+        Some(p.DMA1),
+        p.GPIOA,
+        p.RCC,
+    );
     pwm.enable(Channel::_1);
 
-    serial.read_exact(dma1, rx_buffer).unwrap();
+    serial.read_exact(p.DMA1, r.RX_BUFFER).unwrap();
 
     timer3.resume();
 }
 
 // IDLE LOOP
-fn idle(ref prio: P0, _: T0) -> ! {
+fn idle(_t: Threshold, mut r: idle::Resources) -> ! {
     loop {
-        rtfm::atomic(|thr| {
-            let dwt = DWT.access(prio, thr);
-            let sleep_cycles = SLEEP_CYCLES.access(prio, thr);
+        rtfm::atomic(|cs| {
+            let dwt = r.DWT.borrow(cs);
+            let sleep_cycles = r.SLEEP_CYCLES.borrow_mut(cs);
 
             // Sleep
             let before = dwt.cyccnt.read();
@@ -107,103 +172,54 @@ fn idle(ref prio: P0, _: T0) -> ! {
             let after = dwt.cyccnt.read();
 
             let elapsed = after.wrapping_sub(before);
-            sleep_cycles.set(sleep_cycles.get() + elapsed);
+            **sleep_cycles += elapsed;
         });
 
-        // Service interrupts
+        // interrupts are serviced here
     }
 }
 
 // TASKS
-tasks!(stm32f103xx, {
-    frame_start: Task {
-        interrupt: EXTI0,
-        priority: P1,
-        enabled: true,
-    },
-    frame_tail_start: Task {
-        interrupt: DMA1_CHANNEL2,
-        priority: P1,
-        enabled: true,
-    },
-    frame_end: Task {
-        interrupt: TIM1_UP_TIM10,
-        priority: P1,
-        enabled: true,
-    },
-    log: Task {
-        interrupt: TIM3,
-        priority: P1,
-        enabled: true,
-    },
-    rx: Task {
-        interrupt: DMA1_CHANNEL5,
-        priority: P1,
-        enabled: true,
-    },
-    tx_transfer_done: Task {
-        interrupt: DMA1_CHANNEL4,
-        priority: P1,
-        enabled: true,
-    },
-});
+task!(TIM3, log);
 
-fn log(_task: TIM3, ref prio: P1, ref thr: T1) {
-    let context_switches = CONTEXT_SWITCHES.access(prio, thr);
-    context_switches.set(context_switches.get() + 1);
-
-    let dma1 = &DMA1.access(prio, thr);
-    let dwt = DWT.access(prio, thr);
-    let frames = FRAMES.access(prio, thr);
-    let sleep_cycles = SLEEP_CYCLES.access(prio, thr);
-    let tim3 = TIM3.access(prio, thr);
-    let tx_buffer = TX_BUFFER.access(prio, thr);
-    let usart1 = USART1.access(prio, thr);
-
-    let timer = Timer(&*tim3);
-    let serial = Serial(&*usart1);
+fn log(_t: Threshold, r: TIM3::Resources) {
+    let timer = Timer(r.TIM3);
+    let serial = Serial(r.USART1);
 
     timer.wait().unwrap();
 
-    let snapshot = dwt.cyccnt.read();
+    let snapshot = r.DWT.cyccnt.read();
     let state = State {
-        context_switches: context_switches.get(),
-        frames: frames.get(),
-        sleep_cycles: sleep_cycles.get(),
+        context_switches: **r.CONTEXT_SWITCHES,
+        frames: **r.FRAMES,
+        sleep_cycles: **r.SLEEP_CYCLES,
         snapshot: snapshot,
     };
-    state.serialize(&mut *tx_buffer.borrow_mut());
+    state.serialize(&mut *r.TX_BUFFER.borrow_mut());
 
-    serial.write_all(dma1, tx_buffer).unwrap();
+    serial.write_all(r.DMA1, r.TX_BUFFER).unwrap();
 
-    context_switches.set(0);
-    frames.set(0);
-    sleep_cycles.set(0);
+    **r.CONTEXT_SWITCHES = 0;
+    **r.FRAMES = 0;
+    **r.SLEEP_CYCLES = 0;
 }
 
-fn tx_transfer_done(_task: DMA1_CHANNEL4, ref prio: P1, ref thr: T1) {
-    let context_switches = CONTEXT_SWITCHES.access(prio, thr);
-    context_switches.set(context_switches.get() + 1);
+task!(DMA1_CHANNEL4, tx_transfer_done);
 
-    let dma1 = &DMA1.access(prio, thr);
-    let tx_buffer = TX_BUFFER.access(prio, thr);
+fn tx_transfer_done(_t: Threshold, r: DMA1_CHANNEL4::Resources) {
+    **r.CONTEXT_SWITCHES += 1;
 
-    tx_buffer.release(dma1).unwrap();
+    r.TX_BUFFER.release(r.DMA1).unwrap();
 }
 
-fn rx(_task: DMA1_CHANNEL5, ref prio: P1, ref thr: T1) {
-    let context_switches = CONTEXT_SWITCHES.access(prio, thr);
-    context_switches.set(context_switches.get() + 1);
+task!(DMA1_CHANNEL5, rx);
 
-    let busy = BUSY.access(prio, thr);
-    let dma1 = &DMA1.access(prio, thr);
-    let rgb_array = RGB_ARRAY.access(prio, thr);
-    let rx_buffer = RX_BUFFER.access(prio, thr);
-    let usart1 = USART1.access(prio, thr);
+fn rx(_t: Threshold, r: DMA1_CHANNEL5::Resources) {
+    **r.CONTEXT_SWITCHES += 1;
 
-    let serial = Serial(&*usart1);
+    let serial = Serial(r.USART1);
 
-    rx_buffer.release(dma1).unwrap();
+    r.RX_BUFFER.release(r.DMA1).unwrap();
 
     // When busy we just ignore incoming frames
     // TODO we can probably double throughput if we turn this into a pipeline
@@ -211,33 +227,28 @@ fn rx(_task: DMA1_CHANNEL5, ref prio: P1, ref thr: T1) {
     // previously transformed WS2812B frame is in the process of being
     // serialized to the LED ring. Right now the CPU does nothing while a
     // WS2812B frame is being serialized.
-    if !busy.get() {
-        rgb_array.borrow_mut().copy_from_slice(&*rx_buffer.borrow());
+    if !**r.BUSY {
+        r.RGB_ARRAY.copy_from_slice(&*r.RX_BUFFER.borrow());
 
-        busy.set(true);
+        **r.BUSY = true;
 
-        rtfm::request(frame_start);
+        rtfm::set_pending(Interrupt::EXTI0);
     }
 
-    serial.read_exact(dma1, rx_buffer).unwrap();
+    serial.read_exact(r.DMA1, r.RX_BUFFER).unwrap();
 }
 
-fn frame_start(_task: EXTI0, ref prio: P1, ref thr: T1) {
-    let context_switches = CONTEXT_SWITCHES.access(prio, thr);
-    context_switches.set(context_switches.get() + 1);
+task!(EXTI0, frame_start);
 
-    let dma1 = &DMA1.access(prio, thr);
-    let rgb_array = RGB_ARRAY.access(prio, thr);
-    let tim2 = TIM2.access(prio, thr);
-    let ws2812b_buffer = WS2812B_BUFFER.access(prio, thr);
+fn frame_start(_t: Threshold, r: EXTI0::Resources) {
+    **r.CONTEXT_SWITCHES += 1;
 
-    let pwm = Pwm(&*tim2);
+    let pwm = Pwm(r.TIM2);
 
     // Construct and send WS2812B frame
-    for (rgb, bits) in rgb_array
-        .borrow()
+    for (rgb, bits) in r.RGB_ARRAY
         .chunks(3)
-        .zip(ws2812b_buffer.borrow_mut().chunks_mut(24))
+        .zip(r.WS2812B_BUFFER.borrow_mut().chunks_mut(24))
     {
         let r = rgb[0];
         let g = rgb[1];
@@ -257,38 +268,34 @@ fn frame_start(_task: EXTI0, ref prio: P1, ref thr: T1) {
         }
     }
 
-    pwm.set_duties(dma1, Channel::_1, ws2812b_buffer).unwrap();
+    pwm.set_duties(r.DMA1, Channel::_1, r.WS2812B_BUFFER)
+        .unwrap();
 }
 
-fn frame_tail_start(_task: DMA1_CHANNEL2, ref prio: P1, ref thr: T1) {
-    #![allow(unreachable_code)]
+task!(DMA1_CHANNEL2, frame_tail_start);
 
-    let context_switches = CONTEXT_SWITCHES.access(prio, thr);
-    context_switches.set(context_switches.get() + 1);
+fn frame_tail_start(_t: Threshold, r: DMA1_CHANNEL2::Resources) {
+    **r.CONTEXT_SWITCHES += 1;
 
-    let dma1 = &DMA1.access(prio, thr);
-    let tim1 = TIM1.access(prio, thr);
-    let ws2812b_buffer = WS2812B_BUFFER.access(prio, thr);
+    let timer = Timer(r.TIM1);
 
-    let timer = Timer(&*tim1);
+    r.WS2812B_BUFFER.release(r.DMA1).unwrap();
 
-    ws2812b_buffer.release(dma1).unwrap();
-
-    timer.restart();
     timer.resume();
+    timer.restart();
 }
 
-fn frame_end(_task: TIM1_UP_TIM10, ref prio: P1, ref thr: T1) {
-    let busy = BUSY.access(prio, thr);
-    let frames = FRAMES.access(prio, thr);
-    let tim1 = TIM1.access(prio, thr);
+task!(TIM1_UP_TIM10, frame_end);
 
-    let timer = Timer(&*tim1);
+fn frame_end(_t: Threshold, r: TIM1_UP_TIM10::Resources) {
+    **r.CONTEXT_SWITCHES += 1;
+
+    let timer = Timer(r.TIM1);
 
     timer.wait().unwrap();
 
     timer.pause();
 
-    busy.set(false);
-    frames.set(frames.get() + 1);
+    **r.BUSY = false;
+    **r.FRAMES += 1;
 }
