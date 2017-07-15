@@ -1,9 +1,8 @@
 #![deny(warnings)]
 #![feature(const_fn)]
-#![feature(plugin)]
+#![feature(proc_macro)]
 #![feature(used)]
 #![no_std]
-#![plugin(rtfm_macros)]
 
 extern crate blue_pill;
 
@@ -17,7 +16,7 @@ use blue_pill::prelude::*;
 use blue_pill::stm32f103xx::Interrupt;
 use blue_pill::time::{Hertz, Microseconds};
 use blue_pill::{Channel, Pwm, Serial, Timer};
-use rtfm::Threshold;
+use rtfm::{Threshold, app};
 use shared::State;
 
 // CONFIGURATION
@@ -29,7 +28,7 @@ const LOG_FREQUENCY: Hertz = Hertz(1);
 const WS2812B_FREQUENCY: Hertz = Hertz(400_000);
 
 // TASKS AND RESOURCES
-rtfm! {
+app! {
     device: blue_pill::stm32f103xx,
 
     resources: {
@@ -43,12 +42,7 @@ rtfm! {
         WS2812B_BUFFER: Buffer<[u8; 577], Dma1Channel2> = Buffer::new([0; 577]);
     },
 
-    init: {
-        path: init,
-    },
-
     idle: {
-        path: idle,
         resources: [
             DWT,
             SLEEP_CYCLES,
