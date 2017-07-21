@@ -16,7 +16,7 @@ use blue_pill::prelude::*;
 use blue_pill::stm32f103xx::Interrupt;
 use blue_pill::time::{Hertz, Microseconds};
 use blue_pill::{Channel, Pwm, Serial, Timer};
-use rtfm::{Threshold, app};
+use rtfm::{app, Resource, Threshold};
 use shared::State;
 
 // CONFIGURATION
@@ -32,14 +32,15 @@ app! {
     device: blue_pill::stm32f103xx,
 
     resources: {
-        BUSY: bool = false;
-        CONTEXT_SWITCHES: u16 = 0;
-        FRAMES: u8 = 0;
-        RGB_ARRAY: [u8; 72] = [0; 72];
-        RX_BUFFER: Buffer<[u8; 72], Dma1Channel5> = Buffer::new([0; 72]);
-        SLEEP_CYCLES: u32 = 0;
-        TX_BUFFER: Buffer<[u8; 13], Dma1Channel4> = Buffer::new([0; 13]);
-        WS2812B_BUFFER: Buffer<[u8; 577], Dma1Channel2> = Buffer::new([0; 577]);
+        static BUSY: bool = false;
+        static CONTEXT_SWITCHES: u16 = 0;
+        static FRAMES: u8 = 0;
+        static RGB_ARRAY: [u8; 72] = [0; 72];
+        static RX_BUFFER: Buffer<[u8; 72], Dma1Channel5> = Buffer::new([0; 72]);
+        static SLEEP_CYCLES: u32 = 0;
+        static TX_BUFFER: Buffer<[u8; 13], Dma1Channel4> = Buffer::new([0; 13]);
+        static WS2812B_BUFFER: Buffer<[u8; 577], Dma1Channel2> =
+            Buffer::new([0; 577]);
     },
 
     idle: {
@@ -154,7 +155,7 @@ fn init(p: init::Peripherals, r: init::Resources) {
 }
 
 // IDLE LOOP
-fn idle(_t: Threshold, mut r: idle::Resources) -> ! {
+fn idle(_t: &mut Threshold, mut r: idle::Resources) -> ! {
     loop {
         rtfm::atomic(|cs| {
             let dwt = r.DWT.borrow(cs);
@@ -176,9 +177,9 @@ fn idle(_t: Threshold, mut r: idle::Resources) -> ! {
 // TASKS
 task!(TIM3, log);
 
-fn log(_t: Threshold, r: TIM3::Resources) {
-    let timer = Timer(r.TIM3);
-    let serial = Serial(r.USART1);
+fn log(_t: &mut Threshold, r: TIM3::Resources) {
+    let timer = Timer(&**r.TIM3);
+    let serial = Serial(&**r.USART1);
 
     timer.wait().unwrap();
 
@@ -189,7 +190,7 @@ fn log(_t: Threshold, r: TIM3::Resources) {
         sleep_cycles: **r.SLEEP_CYCLES,
         snapshot: snapshot,
     };
-    state.serialize(&mut *r.TX_BUFFER.borrow_mut());
+    state.serialize(&mut *(**r.TX_BUFFER).borrow_mut());
 
     serial.write_all(r.DMA1, r.TX_BUFFER).unwrap();
 
@@ -200,7 +201,7 @@ fn log(_t: Threshold, r: TIM3::Resources) {
 
 task!(DMA1_CHANNEL4, tx_transfer_done);
 
-fn tx_transfer_done(_t: Threshold, r: DMA1_CHANNEL4::Resources) {
+fn tx_transfer_done(_t: &mut Threshold, r: DMA1_CHANNEL4::Resources) {
     **r.CONTEXT_SWITCHES += 1;
 
     r.TX_BUFFER.release(r.DMA1).unwrap();
@@ -208,10 +209,10 @@ fn tx_transfer_done(_t: Threshold, r: DMA1_CHANNEL4::Resources) {
 
 task!(DMA1_CHANNEL5, rx);
 
-fn rx(_t: Threshold, r: DMA1_CHANNEL5::Resources) {
+fn rx(_t: &mut Threshold, r: DMA1_CHANNEL5::Resources) {
     **r.CONTEXT_SWITCHES += 1;
 
-    let serial = Serial(r.USART1);
+    let serial = Serial(&**r.USART1);
 
     r.RX_BUFFER.release(r.DMA1).unwrap();
 
@@ -222,7 +223,7 @@ fn rx(_t: Threshold, r: DMA1_CHANNEL5::Resources) {
     // serialized to the LED ring. Right now the CPU does nothing while a
     // WS2812B frame is being serialized.
     if !**r.BUSY {
-        r.RGB_ARRAY.copy_from_slice(&*r.RX_BUFFER.borrow());
+        r.RGB_ARRAY.copy_from_slice(&*(**r.RX_BUFFER).borrow());
 
         **r.BUSY = true;
 
@@ -234,25 +235,23 @@ fn rx(_t: Threshold, r: DMA1_CHANNEL5::Resources) {
 
 task!(EXTI0, frame_start);
 
-fn frame_start(_t: Threshold, r: EXTI0::Resources) {
+fn frame_start(_t: &mut Threshold, r: EXTI0::Resources) {
     **r.CONTEXT_SWITCHES += 1;
 
-    let pwm = Pwm(r.TIM2);
+    let pwm = Pwm(&**r.TIM2);
 
     // Construct and send WS2812B frame
     for (rgb, bits) in r.RGB_ARRAY
         .chunks(3)
-        .zip(r.WS2812B_BUFFER.borrow_mut().chunks_mut(24))
+        .zip((**r.WS2812B_BUFFER).borrow_mut().chunks_mut(24))
     {
         let r = rgb[0];
         let g = rgb[1];
         let b = rgb[2];
 
         // NOTE these LEDs use the GRB format
-        for (mut byte, bits) in [g, r, b]
-            .iter()
-            .cloned()
-            .zip(bits.chunks_mut(8))
+        for (mut byte, bits) in
+            [g, r, b].iter().cloned().zip(bits.chunks_mut(8))
         {
             for bit in bits.iter_mut().rev() {
                 *bit = if byte & 1 == 0 { _0 } else { _1 };
@@ -268,10 +267,10 @@ fn frame_start(_t: Threshold, r: EXTI0::Resources) {
 
 task!(DMA1_CHANNEL2, frame_tail_start);
 
-fn frame_tail_start(_t: Threshold, r: DMA1_CHANNEL2::Resources) {
+fn frame_tail_start(_t: &mut Threshold, r: DMA1_CHANNEL2::Resources) {
     **r.CONTEXT_SWITCHES += 1;
 
-    let timer = Timer(r.TIM1);
+    let timer = Timer(&**r.TIM1);
 
     r.WS2812B_BUFFER.release(r.DMA1).unwrap();
 
@@ -281,10 +280,10 @@ fn frame_tail_start(_t: Threshold, r: DMA1_CHANNEL2::Resources) {
 
 task!(TIM1_UP_TIM10, frame_end);
 
-fn frame_end(_t: Threshold, r: TIM1_UP_TIM10::Resources) {
+fn frame_end(_t: &mut Threshold, r: TIM1_UP_TIM10::Resources) {
     **r.CONTEXT_SWITCHES += 1;
 
-    let timer = Timer(r.TIM1);
+    let timer = Timer(&**r.TIM1);
 
     timer.wait().unwrap();
 
