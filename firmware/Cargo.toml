@@ -1,30 +1,23 @@
 [package]
 authors = ["Jorge Aparicio <jorge@japaric.io>"]
-description = "WS2812 demo application"
+description = "WS2812B demo application"
 license = "MIT OR Apache-2.0"
-name = "ws2812"
+name = "firmware"
 repository = "https://github.com/japaric/ws2812"
 version = "0.1.0"
 
 [dependencies]
-cortex-m-rtfm = "0.1.1"
+aligned = "0.1.1"
+cortex-m = "0.3.0"
+cortex-m-rtfm = "0.2.0"
 
 [dependencies.blue-pill]
 git = "https://github.com/japaric/blue-pill"
-rev = "c5252eeef4e9710c199ae96164d37d69e127800d"
-
-[dependencies.cortex-m]
-version = "0.2.10"
+rev = "2b7d5c56b25f4efad6c7c40042f884cbecb47c0b"
 
 [dependencies.cortex-m-rt]
-version = "0.2.4"
-
-[dependencies.embedded-hal]
-git = "https://github.com/japaric/embedded-hal"
-rev = "5295697669f5b48a900aa325b8ebb4d4e8d4b236"
-
-[dependencies.nb]
-git = "https://github.com/japaric/nb"
+features = ["abort-on-panic"]
+version = "0.3.0"
 
 [dependencies.shared]
 optional = false
