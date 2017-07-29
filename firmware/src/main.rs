@@ -4,13 +4,12 @@
 #![feature(used)]
 #![no_std]
 
+extern crate aligned;
 extern crate blue_pill;
-
-#[macro_use(task)]
 extern crate cortex_m_rtfm as rtfm;
-
 extern crate shared;
 
+use aligned::Aligned;
 use blue_pill::dma::{Buffer, Dma1Channel2, Dma1Channel4, Dma1Channel5};
 use blue_pill::prelude::*;
 use blue_pill::stm32f103xx::Interrupt;
@@ -35,7 +34,7 @@ app! {
         static BUSY: bool = false;
         static CONTEXT_SWITCHES: u16 = 0;
         static FRAMES: u8 = 0;
-        static RGB_ARRAY: [u8; 72] = [0; 72];
+        static RGB_ARRAY: Aligned<u32, [u8; 72]> = Aligned([0; 72]);
         static RX_BUFFER: Buffer<[u8; 72], Dma1Channel5> = Buffer::new([0; 72]);
         static SLEEP_CYCLES: u32 = 0;
         static TX_BUFFER: Buffer<[u8; 13], Dma1Channel4> = Buffer::new([0; 13]);
@@ -52,8 +51,7 @@ app! {
 
     tasks: {
         DMA1_CHANNEL2: {
-            enabled: true,
-            priority: 1,
+            path: frame_tail_start,
             resources: [
                 CONTEXT_SWITCHES,
                 DMA1,
@@ -63,8 +61,7 @@ app! {
         },
 
         DMA1_CHANNEL4: {
-            enabled: true,
-            priority: 1,
+            path: tx_transfer_done,
             resources: [
                 CONTEXT_SWITCHES,
                 DMA1,
@@ -73,8 +70,7 @@ app! {
         },
 
         DMA1_CHANNEL5: {
-            enabled: true,
-            priority: 1,
+            path: rx,
             resources: [
                 BUSY,
                 CONTEXT_SWITCHES,
@@ -86,8 +82,7 @@ app! {
         },
 
         EXTI0: {
-            enabled: true,
-            priority: 1,
+            path: frame_start,
             resources: [
                 CONTEXT_SWITCHES,
                 DMA1,
@@ -98,8 +93,7 @@ app! {
         },
 
         TIM1_UP_TIM10: {
-            enabled: true,
-            priority: 1,
+            path: frame_end,
             resources: [
                 BUSY,
                 CONTEXT_SWITCHES,
@@ -109,8 +103,7 @@ app! {
         },
 
         TIM3: {
-            enabled: true,
-            priority: 1,
+            path: log,
             resources: [
                 CONTEXT_SWITCHES,
                 DMA1,
@@ -155,11 +148,11 @@ fn init(p: init::Peripherals, r: init::Resources) {
 }
 
 // IDLE LOOP
-fn idle(_t: &mut Threshold, mut r: idle::Resources) -> ! {
+fn idle(t: &mut Threshold, mut r: idle::Resources) -> ! {
     loop {
-        rtfm::atomic(|cs| {
-            let dwt = r.DWT.borrow(cs);
-            let sleep_cycles = r.SLEEP_CYCLES.borrow_mut(cs);
+        rtfm::atomic(t, |t| {
+            let dwt = r.DWT.borrow(t);
+            let sleep_cycles = r.SLEEP_CYCLES.borrow_mut(t);
 
             // Sleep
             let before = dwt.cyccnt.read();
@@ -175,8 +168,6 @@ fn idle(_t: &mut Threshold, mut r: idle::Resources) -> ! {
 }
 
 // TASKS
-task!(TIM3, log);
-
 fn log(_t: &mut Threshold, r: TIM3::Resources) {
     let timer = Timer(&**r.TIM3);
     let serial = Serial(&**r.USART1);
@@ -199,15 +190,11 @@ fn log(_t: &mut Threshold, r: TIM3::Resources) {
     **r.SLEEP_CYCLES = 0;
 }
 
-task!(DMA1_CHANNEL4, tx_transfer_done);
-
 fn tx_transfer_done(_t: &mut Threshold, r: DMA1_CHANNEL4::Resources) {
     **r.CONTEXT_SWITCHES += 1;
 
     r.TX_BUFFER.release(r.DMA1).unwrap();
 }
-
-task!(DMA1_CHANNEL5, rx);
 
 fn rx(_t: &mut Threshold, r: DMA1_CHANNEL5::Resources) {
     **r.CONTEXT_SWITCHES += 1;
@@ -223,7 +210,9 @@ fn rx(_t: &mut Threshold, r: DMA1_CHANNEL5::Resources) {
     // serialized to the LED ring. Right now the CPU does nothing while a
     // WS2812B frame is being serialized.
     if !**r.BUSY {
-        r.RGB_ARRAY.copy_from_slice(&*(**r.RX_BUFFER).borrow());
+        r.RGB_ARRAY
+            .array
+            .copy_from_slice(&*(**r.RX_BUFFER).borrow());
 
         **r.BUSY = true;
 
@@ -233,8 +222,6 @@ fn rx(_t: &mut Threshold, r: DMA1_CHANNEL5::Resources) {
     serial.read_exact(r.DMA1, r.RX_BUFFER).unwrap();
 }
 
-task!(EXTI0, frame_start);
-
 fn frame_start(_t: &mut Threshold, r: EXTI0::Resources) {
     **r.CONTEXT_SWITCHES += 1;
 
@@ -242,6 +229,7 @@ fn frame_start(_t: &mut Threshold, r: EXTI0::Resources) {
 
     // Construct and send WS2812B frame
     for (rgb, bits) in r.RGB_ARRAY
+        .array
         .chunks(3)
         .zip((**r.WS2812B_BUFFER).borrow_mut().chunks_mut(24))
     {
@@ -265,8 +253,6 @@ fn frame_start(_t: &mut Threshold, r: EXTI0::Resources) {
         .unwrap();
 }
 
-task!(DMA1_CHANNEL2, frame_tail_start);
-
 fn frame_tail_start(_t: &mut Threshold, r: DMA1_CHANNEL2::Resources) {
     **r.CONTEXT_SWITCHES += 1;
 
@@ -277,8 +263,6 @@ fn frame_tail_start(_t: &mut Threshold, r: DMA1_CHANNEL2::Resources) {
     timer.resume();
     timer.restart();
 }
-
-task!(TIM1_UP_TIM10, frame_end);
 
 fn frame_end(_t: &mut Threshold, r: TIM1_UP_TIM10::Resources) {
     **r.CONTEXT_SWITCHES += 1;
