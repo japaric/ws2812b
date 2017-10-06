@@ -12,6 +12,7 @@ use rand::{Rng, XorShiftRng};
 
 use errors::*;
 
+#[allow(unused_doc_comment)]
 mod errors {
     error_chain! {
         foreign_links {
